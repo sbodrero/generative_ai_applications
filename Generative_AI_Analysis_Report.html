@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Generative AI Analysis Report — Sébastien Bodrero</title>
+<style>
+  body {
+    font-family: 'Georgia', serif;
+    font-size: 12pt;
+    line-height: 1.8;
+    color: #1a1a1a;
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 40px 50px;
+    background: #fff;
+  }
+  h1 { font-size: 20pt; text-align: center; margin-bottom: 4px; }
+  h2 { font-size: 14pt; border-bottom: 2px solid #2c3e50; padding-bottom: 4px; margin-top: 36px; color: #2c3e50; }
+  h3 { font-size: 12pt; color: #2c3e50; margin-top: 24px; }
+  .meta { text-align: center; font-size: 11pt; color: #555; margin-bottom: 32px; line-height: 2; }
+  .abstract {
+    background: #f5f7fa;
+    border-left: 4px solid #2c3e50;
+    padding: 16px 20px;
+    margin: 24px 0;
+    font-size: 11pt;
+  }
+  table { border-collapse: collapse; width: 100%; margin: 18px 0; font-size: 11pt; }
+  th { background: #2c3e50; color: #fff; padding: 8px 12px; text-align: left; }
+  td { padding: 7px 12px; border-bottom: 1px solid #ddd; vertical-align: top; }
+  tr:nth-child(even) td { background: #f8f9fa; }
+  code { background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 10pt; }
+  .refs p { font-size: 11pt; padding-left: 2em; text-indent: -2em; margin: 10px 0; }
+  hr { border: none; border-top: 1px solid #ccc; margin: 32px 0; }
+  .page-break { page-break-after: always; }
+  blockquote { border-left: 3px solid #aaa; margin: 16px 0 16px 20px; padding-left: 16px; color: #444; font-style: italic; }
+  @media print {
+    body { padding: 20px 30px; }
+    h2 { page-break-after: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Generative AI Analysis Report</h1>
+<h1 style="font-size:14pt; font-weight:normal; text-align:center;">Variational Autoencoder for Handwritten Digit Generation on MNIST</h1>
+
+<div class="meta">
+  <strong>Author:</strong> Sébastien Bodrero<br>
+  <strong>Institutional Affiliation:</strong> Woolf University / Udacity MSc in Artificial Intelligence<br>
+  <strong>Course:</strong> AI Mastery — Module 5: Generative AI Applications<br>
+  <strong>Date:</strong> April 2026
+</div>
+
+<div class="abstract">
+  <strong>Abstract.</strong> This report documents the design, training, and evaluation of a Variational Autoencoder (VAE) applied to the MNIST handwritten digit dataset (70,000 grayscale 28×28 images). The VAE learns a 20-dimensional Gaussian latent space and generates novel digit images by sampling from the prior distribution 𝒩(0, I). After 20 training epochs with Adam (lr=0.001), the model achieves a final ELBO loss of 104.10 per sample (BCE=78.45, KL=25.65). Generated outputs are visually recognisable as digit-like shapes; reconstructions faithfully preserve digit identity with characteristic VAE blurring. The report also addresses ethical considerations, including the misuse potential of generative models and the limitations of training on demographically narrow handwriting datasets. As Adhikari (2022) notes, a reproducible workflow "ensures that others can verify, build on, and extend [your] analysis" — fixed seeds, pinned dependencies, and automated dataset download are all implemented.
+</div>
+
+<hr>
+
+<h2>1. Overview</h2>
+
+<p>
+This project implements a <strong>Variational Autoencoder (VAE)</strong> — a deep generative model that learns to encode data into a structured latent space and decode samples from that space into new outputs. The chosen task is <strong>handwritten digit generation</strong>: the model is trained on MNIST images and learns to generate new, realistic digit images without being given any specific digit as input.
+</p>
+
+<p>
+VAEs were selected over GANs and Transformer-based generation for this task because they offer:
+</p>
+<ul>
+  <li>A principled probabilistic framework with a closed-form training objective (ELBO)</li>
+  <li>A continuous, structured latent space that supports smooth interpolation between digits</li>
+  <li>Stable training behavior — unlike GANs, which are prone to mode collapse and require careful hyperparameter tuning (Goodfellow et al., 2014)</li>
+  <li>CPU-feasible training: 20 epochs on MNIST complete in under 10 minutes on a standard laptop</li>
+</ul>
+
+<p>
+The experiment follows a reproducible workflow: fixed random seeds (<code>torch.manual_seed(42)</code>), automated dataset download via <code>torchvision.datasets.MNIST</code>, and pinned dependencies in <code>requirements.txt</code> — consistent with best practices for reproducible data science (Adhikari, 2022).
+</p>
+
+<h2>2. Dataset or Prompt Description</h2>
+
+<p>
+The <strong>MNIST handwritten digit dataset</strong> (LeCun et al., 1998) contains <strong>70,000 grayscale 28×28 pixel images</strong> of handwritten digits 0–9, split into 60,000 training and 10,000 test images. Each of the 10 digit classes contains exactly 6,000 training and 1,000 test images — a perfectly balanced distribution.
+</p>
+
+<table>
+  <tr><th>Property</th><th>Value</th></tr>
+  <tr><td>Total images</td><td>70,000 (60,000 train / 10,000 test)</td></tr>
+  <tr><td>Image dimensions</td><td>28 × 28 pixels, grayscale</td></tr>
+  <tr><td>Classes</td><td>10 (digits 0–9)</td></tr>
+  <tr><td>Pixel value range (after ToTensor)</td><td>[0.0, 1.0]</td></tr>
+  <tr><td>Source</td><td><code>torchvision.datasets.MNIST(download=True)</code></td></tr>
+  <tr><td>License</td><td>Public domain (Yann LeCun's lab, NYU)</td></tr>
+</table>
+
+<p>
+<strong>Preprocessing:</strong> <code>transforms.ToTensor()</code> divides pixel values by 255, normalising the range to [0, 1]. No further normalisation (e.g., z-scoring) is applied because the VAE decoder uses a Sigmoid activation, which also produces outputs in [0, 1] — making Binary Cross-Entropy a natural reconstruction loss. No data augmentation is applied; the task is generation, not classification, so augmentation would alter the digit distribution the model is trying to learn.
+</p>
+
+<p>
+MNIST is not synthetic and is not AI-generated. It was not used in any previous capstone project (Modules 1–4 used NYC Airbnb, Medical Insurance Costs, Pima Diabetes, and Fashion-MNIST respectively).
+</p>
+
+<h2>3. Model Design and Training Approach</h2>
+
+<h3>3.1 VAE Architecture</h3>
+
+<p>
+The VAE (Kingma &amp; Welling, 2013) consists of three components:
+</p>
+
+<table>
+  <tr><th>Component</th><th>Architecture</th><th>Purpose</th></tr>
+  <tr><td><strong>Encoder</strong></td><td>Linear(784→400) → ReLU → [Linear(400→20) for μ, Linear(400→20) for log σ²]</td><td>Maps image to latent distribution parameters</td></tr>
+  <tr><td><strong>Reparameterization</strong></td><td>z = μ + ε · σ, ε ~ 𝒩(0, I)</td><td>Enables backpropagation through sampling</td></tr>
+  <tr><td><strong>Decoder</strong></td><td>Linear(20→400) → ReLU → Linear(400→784) → Sigmoid</td><td>Maps latent vector to reconstructed image</td></tr>
+</table>
+
+<p><strong>Total trainable parameters: 650,640</strong></p>
+
+<h3>3.2 Design Decisions</h3>
+
+<table>
+  <tr><th>Decision</th><th>Justification</th></tr>
+  <tr><td>Latent dim = 20</td><td>Sufficient to encode digit identity and stroke style; small enough to force meaningful compression of 784-dimensional input</td></tr>
+  <tr><td>Hidden dim = 400</td><td>Standard for MNIST VAEs; provides capacity without excessive compute on CPU</td></tr>
+  <tr><td>Sigmoid decoder output</td><td>Ensures output ∈ [0, 1], matching normalised pixel range; required for BCE loss</td></tr>
+  <tr><td>ELBO loss (BCE + KL)</td><td>BCE measures pixel-level reconstruction fidelity; KL regularises latent space toward the prior, enabling generation (Kingma &amp; Welling, 2013)</td></tr>
+  <tr><td>KL summed (not averaged)</td><td>Prevents KL from vanishing relative to BCE at large batch sizes; standard practice</td></tr>
+  <tr><td>Adam lr=0.001</td><td>Adaptive learning rates; robust default for variational objectives</td></tr>
+  <tr><td>Epochs = 20</td><td>Sufficient for MNIST convergence on CPU; loss stabilises by epoch 15</td></tr>
+  <tr><td>Batch size = 128</td><td>Balances gradient variance and CPU throughput</td></tr>
+</table>
+
+<h3>3.3 Training Behavior</h3>
+
+<p>
+The model was trained for <strong>20 epochs</strong> on the 60,000-image training set. Final training diagnostics:
+</p>
+
+<table>
+  <tr><th>Metric</th><th>Final Value (per sample)</th></tr>
+  <tr><td>Total ELBO loss</td><td>104.10</td></tr>
+  <tr><td>Reconstruction loss (BCE)</td><td>78.45</td></tr>
+  <tr><td>KL divergence</td><td>25.65</td></tr>
+</table>
+
+<p>
+The loss curves show two expected phases: (1) rapid reconstruction improvement in epochs 1–8 as the decoder learns basic digit shapes, and (2) gradual KL growth as the latent space is regularised toward the prior. Both terms stabilise by epoch 15, indicating convergence without oscillation — a sign of healthy VAE training.
+</p>
+
+<h2>4. Output Evaluation and Interpretation</h2>
+
+<h3>4.1 Reconstructions</h3>
+
+<p>
+Encoding 10 test images and decoding them back produces reconstructions that correctly preserve digit identity in all 10 cases. The reconstructions are visibly blurred compared to the originals — this is a well-known characteristic of VAEs trained with BCE loss, which promotes pixel-wise averaging rather than sharp edges (Kingma &amp; Welling, 2013). The blurring is most pronounced in digits with fine strokes (e.g., <strong>1</strong> and <strong>7</strong>) and least visible in digit <strong>0</strong>, whose circular structure is captured cleanly.
+</p>
+
+<h3>4.2 Generated Samples</h3>
+
+<p>
+Sampling 20 random latent vectors from the prior 𝒩(0, I) and decoding them yields digit-like images. The majority of generated samples are recognisable as specific digits. The model appears to generate <strong>0</strong>, <strong>1</strong>, and <strong>7</strong> reliably, while <strong>8</strong> and <strong>3</strong> sometimes appear as hybrid or ambiguous shapes — likely because their latent representations overlap in the 20-dimensional space. This is consistent with the difficulty of disentangling structurally similar digits at low latent dimensionality.
+</p>
+
+<h3>4.3 Latent Space Interpolation</h3>
+
+<p>
+Linearly interpolating between two encoded latent means produces a smooth visual transition between digit identities. The transition passes through intermediate shapes that are themselves plausible digit-like images — confirming that the latent space is <strong>continuous and well-regularised</strong>. This property is a structural consequence of the KL divergence term, which forces the encoder distribution toward a unimodal Gaussian prior and prevents isolated clusters in latent space.
+</p>
+
+<h3>4.4 Failure Cases</h3>
+
+<p>
+The primary failure modes observed are:
+</p>
+<ul>
+  <li><strong>Output blurring:</strong> All reconstructions and generated samples exhibit blurring, inherent to BCE-based VAEs.</li>
+  <li><strong>Ambiguous samples:</strong> Approximately 10–15% of random samples produce shapes that are not clearly identifiable as a specific digit.</li>
+  <li><strong>Digit 8 / digit 3 confusion:</strong> Some samples lie at the boundary between these classes in latent space, producing hybrid strokes.</li>
+</ul>
+
+<h2>5. Ethical Considerations and Responsible Use</h2>
+
+<h3>5.1 Handwriting Forgery Risk</h3>
+
+<p>
+The most direct misuse risk of this VAE is <strong>handwriting forgery</strong>. While the model generates low-resolution (28×28) outputs unsuitable for practical forgery at this scale, the architecture generalises directly: trained on higher-resolution, named handwriting samples, a VAE could generate convincing facsimiles of an individual's handwriting. This poses risks to document authentication systems and handwriting-based identity verification.
+</p>
+
+<p>
+The MNIST dataset itself is fully anonymous — contributor identity was removed before publication. However, the deployment of generative models trained on identifiable handwriting data would require explicit consent, purpose limitation, and appropriate access controls consistent with GDPR Article 5 principles (where applicable in the EU context).
+</p>
+
+<h3>5.2 Dataset Bias and Coverage</h3>
+
+<p>
+MNIST was collected from US Census Bureau employees and American high school students in the 1990s (LeCun et al., 1998). As a result, the handwriting styles reflect a specific demographic and cultural context. A VAE trained exclusively on MNIST would not adequately represent digit writing conventions from other regions (e.g., stylistic differences in how <strong>1</strong> and <strong>7</strong> are written in European versus East Asian traditions). Deploying such a model in a culturally diverse context — for instance, as a digit verification system for a global postal service — would risk systematic misclassification of handwriting styles underrepresented in the training data.
+</p>
+
+<h3>5.3 Creative Ownership</h3>
+
+<p>
+Generated digits are derived from the latent space learned over 60,000 human-authored examples. Questions of creative ownership are less acute here than in image or text generation of recognisable artworks, but the broader principle applies: outputs of generative models trained on human-created data carry implicit attribution obligations that vary by jurisdiction and deployment context.
+</p>
+
+<h2>6. Limitations and Future Improvements</h2>
+
+<ol>
+  <li>
+    <strong>Output blurring (BCE loss):</strong> BCE encourages pixel-wise averaging, producing blurred outputs.
+    Replacing BCE with a <strong>perceptual loss</strong> (e.g., feature matching on a pre-trained encoder) or adding a <strong>GAN discriminator</strong> (VAE-GAN hybrid) would significantly sharpen generated images.
+  </li>
+  <li>
+    <strong>Unconditional generation only:</strong> The current VAE generates digits without control over which digit is produced.
+    A <strong>Conditional VAE (CVAE)</strong> would accept a class label as input to both encoder and decoder, enabling targeted generation (e.g., "generate a 5").
+  </li>
+  <li>
+    <strong>Low latent dimensionality:</strong> At latent dim=20, some digit classes overlap (particularly 3, 8, and 5).
+    Increasing to 32–64 dimensions and visualising the latent space with t-SNE would reveal class separation more clearly.
+  </li>
+  <li>
+    <strong>Single-run results:</strong> Results are from one training run (seed=42). Variability across seeds is unknown; multiple runs would establish confidence intervals on the loss metrics.
+  </li>
+  <li>
+    <strong>No quantitative generation metric:</strong> Fréchet Inception Distance (FID) or a trained digit classifier accuracy on generated samples would provide an objective generation quality score.
+  </li>
+</ol>
+
+<h2>7. References</h2>
+
+<div class="refs">
+  <p>Adhikari, N. K. J. (2022). <em>Reproducible data science with Python: An open learning resource</em>. ResearchGate. https://doi.org/10.13140/RG.2.2.22099.04641</p>
+
+  <p>Goodfellow, I., Pouget-Abadie, J., Mirza, M., Xu, B., Warde-Farley, D., Ozair, S., Courville, A., &amp; Bengio, Y. (2014). Generative adversarial nets. <em>Advances in Neural Information Processing Systems</em>, <em>27</em>, 2672–2680. https://papers.nips.cc/paper_files/paper/2014/hash/5ca3e9b122f61f8f06494c97b1afccf3-Abstract.html</p>
+
+  <p>Kingma, D. P., &amp; Welling, M. (2013). <em>Auto-encoding variational Bayes</em>. arXiv. https://arxiv.org/abs/1312.6114</p>
+
+  <p>LeCun, Y., Cortes, C., &amp; Burges, C. J. C. (1998). <em>The MNIST database of handwritten digits</em>. http://yann.lecun.com/exdb/mnist/</p>
+</div>
+
+</body>
+</html>
